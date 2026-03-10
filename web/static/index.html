@@ -1,0 +1,100 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Net Checker</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div class="container">
+    <h1>Net Checker</h1>
+
+    <div id="net-info" class="net-info">Loading network info...</div>
+
+    <div class="global-input">
+      <label for="global-domain">Domain</label>
+      <input type="text" id="global-domain" placeholder="example.com">
+      <label for="global-dns">DNS</label>
+      <input type="text" id="global-dns" placeholder="DNS server (optional)">
+    </div>
+
+    <nav class="tabs">
+      <button class="tab active" data-tab="ping">Ping</button>
+      <button class="tab" data-tab="traceroute">Traceroute</button>
+      <button class="tab" data-tab="nslookup">NSLookup</button>
+      <button class="tab" data-tab="dig">Dig</button>
+      <button class="tab" data-tab="digall">Dig All</button>
+      <button class="tab" data-tab="mailauth">Mail Auth</button>
+      <button class="tab" data-tab="tlscert">TLS Cert</button>
+    </nav>
+
+    <div id="tab-ping" class="tab-content active">
+      <div class="input-row">
+        <label><input type="checkbox" id="ping-http"> HTTP</label>
+        <div class="http-url-group" id="ping-http-group" style="display:none">
+          <span class="url-prefix">https://</span>
+          <input type="text" id="ping-http-host" placeholder="example.com" class="url-input">
+        </div>
+        <input type="text" id="ping-timeout" placeholder="Timeout (default: 5s)" style="max-width:160px;flex:none;">
+        <button id="ping-start">Start</button>
+        <button id="ping-stop" disabled>Stop</button>
+      </div>
+      <pre id="ping-output" class="output"></pre>
+    </div>
+
+    <div id="tab-traceroute" class="tab-content">
+      <div class="input-row">
+        <button id="tr-start">Start</button>
+        <button id="tr-stop" disabled>Stop</button>
+      </div>
+      <pre id="tr-output" class="output"></pre>
+    </div>
+
+    <div id="tab-nslookup" class="tab-content">
+      <div class="input-row">
+        <button id="ns-lookup">Lookup</button>
+      </div>
+      <pre id="ns-output" class="output"></pre>
+    </div>
+
+    <div id="tab-dig" class="tab-content">
+      <div class="input-row">
+        <select id="dig-type">
+          <option>A</option>
+          <option>AAAA</option>
+          <option>MX</option>
+          <option>NS</option>
+          <option>TXT</option>
+          <option>SOA</option>
+          <option>CNAME</option>
+          <option>PTR</option>
+          <option>SRV</option>
+        </select>
+        <button id="dig-query">Query</button>
+      </div>
+      <pre id="dig-output" class="output"></pre>
+    </div>
+    <div id="tab-digall" class="tab-content">
+      <div class="input-row">
+        <button id="digall-query">Query All Types</button>
+      </div>
+      <div id="digall-output" class="digall-grid"></div>
+    </div>
+    <div id="tab-mailauth" class="tab-content">
+      <div class="input-row">
+        <button id="mailauth-check">Check</button>
+      </div>
+      <div id="mailauth-output" class="mailauth-container"></div>
+    </div>
+    <div id="tab-tlscert" class="tab-content">
+      <div class="input-row">
+        <input type="text" id="tlscert-port" placeholder="Port (default: 443)" style="max-width:160px;flex:none;">
+        <button id="tlscert-check">Check</button>
+      </div>
+      <div id="tlscert-output" class="tlscert-container"></div>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
