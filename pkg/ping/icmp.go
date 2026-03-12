@@ -1,6 +1,7 @@
 package ping
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"os"
@@ -10,7 +11,7 @@ import (
 	"golang.org/x/net/ipv4"
 )
 
-func icmpPing(host string, seq int, timeout time.Duration) Result {
+func icmpPing(ctx context.Context, host string, seq int, timeout time.Duration) Result {
 	addrs, err := net.LookupHost(host)
 	if err != nil {
 		return Result{Seq: seq, Error: fmt.Sprintf("resolve: %v", err)}
@@ -51,7 +52,21 @@ func icmpPing(host string, seq int, timeout time.Duration) Result {
 	}
 
 	deadline := time.Now().Add(timeout)
+	if ctxDeadline, ok := ctx.Deadline(); ok && ctxDeadline.Before(deadline) {
+		deadline = ctxDeadline
+	}
 	conn.SetDeadline(deadline)
+
+	// Close connection when context is cancelled (e.g., user stops ping)
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			conn.Close()
+		case <-done:
+		}
+	}()
+	defer close(done)
 
 	id := os.Getpid() & 0xffff
 

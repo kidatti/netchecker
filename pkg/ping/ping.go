@@ -48,9 +48,9 @@ func Run(ctx context.Context, host string, opts Options, callback func(Result)) 
 	doOne := func(seq int) {
 		var r Result
 		if opts.ICMP {
-			r = icmpPing(host, seq, opts.Timeout)
+			r = icmpPing(ctx, host, seq, opts.Timeout)
 		} else {
-			r = httpPing(host, seq, opts.Timeout)
+			r = httpPing(ctx, host, seq, opts.Timeout)
 		}
 		stats.Sent++
 		if r.Success {
@@ -63,6 +63,9 @@ func Run(ctx context.Context, host string, opts Options, callback func(Result)) 
 				maxRTT = r.RTT
 			}
 		}
+		if ctx.Err() != nil {
+			return
+		}
 		callback(r)
 	}
 
@@ -70,7 +73,7 @@ func Run(ctx context.Context, host string, opts Options, callback func(Result)) 
 	doOne(seq)
 	seq++
 
-	if opts.Count > 0 && seq >= opts.Count {
+	if ctx.Err() != nil || (opts.Count > 0 && seq >= opts.Count) {
 		return finalizeStats(stats, totalRTT, minRTT, maxRTT)
 	}
 
@@ -84,7 +87,7 @@ func Run(ctx context.Context, host string, opts Options, callback func(Result)) 
 		case <-ticker.C:
 			doOne(seq)
 			seq++
-			if opts.Count > 0 && seq >= opts.Count {
+			if ctx.Err() != nil || (opts.Count > 0 && seq >= opts.Count) {
 				return finalizeStats(stats, totalRTT, minRTT, maxRTT)
 			}
 		}
