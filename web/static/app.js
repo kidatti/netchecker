@@ -8,31 +8,35 @@ document.addEventListener("DOMContentLoaded", () => {
     .then(r => r.json())
     .then(info => {
       const el = document.getElementById("net-info");
-      let html = "";
-      if (info.hostname) {
-        html += '<span class="net-info-item"><span class="net-info-label">Host:</span> ' + escapeHtml(info.hostname) + '</span>';
+      let html = '<table class="net-info-table">';
+      html += netInfoRow("Hostname", escapeHtml(info.hostname || ""));
+      // Interfaces: each with IP, netmask, gateway
+      if (info.interfaces && info.interfaces.length) {
+        info.interfaces.forEach((iface, i) => {
+          let val = escapeHtml(iface.ip) + ' <span class="net-info-mask">' + escapeHtml(iface.netmask) + '</span>';
+          if (iface.gateway) val += ' <span class="net-info-gw">gw ' + escapeHtml(iface.gateway) + '</span>';
+          html += netInfoRow(i === 0 ? "LAN" : "", val);
+        });
       }
-      if (info.ips && info.ips.length) {
-        html += '<span class="net-info-item"><span class="net-info-label">IP:</span> ' + info.ips.map(ip => escapeHtml(ip)).join(", ") + '</span>';
-      }
-      if (info.dns_server) {
-        html += '<span class="net-info-item"><span class="net-info-label">DNS:</span> ' + escapeHtml(info.dns_server) + '</span>';
-      }
+      html += netInfoRow("DNS", escapeHtml(info.dns_server || ""));
+      // WAN IP
       if (info.public_ip) {
-        let globalIp = escapeHtml(info.public_ip);
-        if (info.public_ip_host) {
-          globalIp += ' (' + escapeHtml(info.public_ip_host) + ')';
-        }
-        if (info.country_name) {
-          globalIp += ' — ' + escapeHtml(info.country_name);
-        }
-        html += '<span class="net-info-item"><span class="net-info-label">Global IP:</span> ' + globalIp + '</span>';
+        let wan = escapeHtml(info.public_ip);
+        if (info.public_ip_host) wan += " (" + escapeHtml(info.public_ip_host) + ")";
+        if (info.country_name) wan += ' <span class="net-info-country">' + escapeHtml(info.country_name) + '</span>';
+        html += netInfoRow("WAN", wan);
       }
-      el.innerHTML = html || "No network info available";
+      html += '</table>';
+      el.innerHTML = html;
     })
     .catch(() => {
       document.getElementById("net-info").textContent = "Failed to load network info";
     });
+
+  function netInfoRow(label, value) {
+    const display = value ? value : '<span class="net-info-na">-</span>';
+    return '<tr><td class="net-info-label">' + escapeHtml(label) + '</td><td class="net-info-value">' + display + '</td></tr>';
+  }
 
   // Sync global domain to HTTP URL field
   globalDomain.addEventListener("input", () => {

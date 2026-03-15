@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"netchecker/internal/dns"
+	"netchecker/internal/gateway"
 	"netchecker/internal/validate"
 	"netchecker/pkg/dig"
 	"netchecker/pkg/mailauth"
@@ -296,14 +297,19 @@ func handleTLSCert(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleNetInfo(w http.ResponseWriter, r *http.Request) {
+	type ifaceInfo struct {
+		IP      string `json:"ip"`
+		Netmask string `json:"netmask"`
+		Gateway string `json:"gateway,omitempty"`
+	}
 	type netInfoResponse struct {
-		IPs          []string `json:"ips"`
-		Hostname     string   `json:"hostname"`
-		DNSServer    string   `json:"dns_server"`
-		PublicIP     string   `json:"public_ip"`
-		PublicIPHost string   `json:"public_ip_host"`
-		CountryCode  string   `json:"country_code"`
-		CountryName  string   `json:"country_name"`
+		Hostname     string      `json:"hostname"`
+		Interfaces   []ifaceInfo `json:"interfaces"`
+		DNSServer    string      `json:"dns_server"`
+		PublicIP     string      `json:"public_ip,omitempty"`
+		PublicIPHost string      `json:"public_ip_host,omitempty"`
+		CountryCode  string      `json:"country_code,omitempty"`
+		CountryName  string      `json:"country_name,omitempty"`
 	}
 
 	resp := netInfoResponse{}
@@ -311,7 +317,17 @@ func handleNetInfo(w http.ResponseWriter, r *http.Request) {
 	// Hostname
 	resp.Hostname, _ = os.Hostname()
 
-	// Collect non-loopback IPs
+	// Determine primary LAN IP via UDP dial (no actual traffic)
+	var primaryIP net.IP
+	if conn, err := net.Dial("udp", "8.8.8.8:80"); err == nil {
+		primaryIP = conn.LocalAddr().(*net.UDPAddr).IP
+		conn.Close()
+	}
+
+	// Default gateway (best-effort)
+	defaultGW := gateway.Default()
+
+	// Collect non-loopback, non-link-local IPs with per-interface netmask
 	ifaces, err := net.Interfaces()
 	if err == nil {
 		for _, iface := range ifaces {
@@ -323,29 +339,37 @@ func handleNetInfo(w http.ResponseWriter, r *http.Request) {
 				continue
 			}
 			for _, addr := range addrs {
-				var ip net.IP
-				switch v := addr.(type) {
-				case *net.IPNet:
-					ip = v.IP
-				case *net.IPAddr:
-					ip = v.IP
+				ipnet, ok := addr.(*net.IPNet)
+				if !ok {
+					continue
 				}
-				if ip != nil && !ip.IsLoopback() {
-					resp.IPs = append(resp.IPs, ip.String())
+				ip := ipnet.IP
+				if ip.IsLoopback() || ip.IsLinkLocalUnicast() {
+					continue
 				}
+				info := ifaceInfo{IP: ip.String()}
+				ones, bits := ipnet.Mask.Size()
+				if bits > 0 && len(ipnet.Mask) == 4 {
+					info.Netmask = fmt.Sprintf("%d.%d.%d.%d (/%d)",
+						ipnet.Mask[0], ipnet.Mask[1], ipnet.Mask[2], ipnet.Mask[3], ones)
+				} else if bits > 0 {
+					info.Netmask = fmt.Sprintf("/%d", ones)
+				}
+				// Associate default gateway with the primary interface
+				if primaryIP != nil && ip.Equal(primaryIP) && defaultGW != "" {
+					info.Gateway = defaultGW
+				}
+				resp.Interfaces = append(resp.Interfaces, info)
 			}
 		}
 	}
 
-	// Parse /etc/resolv.conf for default DNS server
-	resp.DNSServer = dns.DefaultServer()
-
-	// Fetch public IP info from external API (best-effort, 3s timeout)
+	// Fetch public IP info from s.apiless.com (best-effort, 3s timeout)
 	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://s.apiless.com/ip", nil)
+	apiReq, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://s.apiless.com/ip", nil)
 	if err == nil {
-		if apiResp, err := http.DefaultClient.Do(req); err == nil {
+		if apiResp, err := http.DefaultClient.Do(apiReq); err == nil {
 			defer apiResp.Body.Close()
 			body, err := io.ReadAll(apiResp.Body)
 			if err == nil {
@@ -368,6 +392,9 @@ func handleNetInfo(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
+
+	// Parse /etc/resolv.conf for default DNS server
+	resp.DNSServer = dns.DefaultServer()
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
