@@ -26,10 +26,11 @@ type Stats struct {
 }
 
 type Options struct {
-	ICMP     bool
-	Count    int
-	Interval time.Duration
-	Timeout  time.Duration
+	ICMP      bool
+	Count     int
+	Interval  time.Duration
+	Timeout   time.Duration
+	IPVersion int // 0=auto, 4=IPv4, 6=IPv6
 }
 
 func Run(ctx context.Context, host string, opts Options, callback func(Result)) Stats {
@@ -48,7 +49,7 @@ func Run(ctx context.Context, host string, opts Options, callback func(Result)) 
 	doOne := func(seq int) {
 		var r Result
 		if opts.ICMP {
-			r = icmpPing(ctx, host, seq, opts.Timeout)
+			r = icmpPing(ctx, host, seq, opts.Timeout, opts.IPVersion)
 		} else {
 			r = httpPing(ctx, host, seq, opts.Timeout)
 		}

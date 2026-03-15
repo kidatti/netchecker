@@ -36,6 +36,11 @@
           <span class="url-prefix">https://</span>
           <input type="text" id="ping-http-host" placeholder="example.com" class="url-input">
         </div>
+        <span class="ip-version-group" id="ping-ip-version">
+          <label><input type="radio" name="ping-ipv" value="0" checked> Auto</label>
+          <label><input type="radio" name="ping-ipv" value="4"> IPv4</label>
+          <label><input type="radio" name="ping-ipv" value="6"> IPv6</label>
+        </span>
         <input type="text" id="ping-timeout" placeholder="Timeout (default: 5s)" style="max-width:160px;flex:none;">
         <button id="ping-start">Start</button>
         <button id="ping-stop" disabled>Stop</button>
@@ -45,6 +50,11 @@
 
     <div id="tab-traceroute" class="tab-content">
       <div class="input-row">
+        <span class="ip-version-group" id="tr-ip-version">
+          <label><input type="radio" name="tr-ipv" value="0" checked> Auto</label>
+          <label><input type="radio" name="tr-ipv" value="4"> IPv4</label>
+          <label><input type="radio" name="tr-ipv" value="6"> IPv6</label>
+        </span>
         <button id="tr-start">Start</button>
         <button id="tr-stop" disabled>Stop</button>
       </div>

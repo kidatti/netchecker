@@ -9,32 +9,69 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
-func icmpPing(ctx context.Context, host string, seq int, timeout time.Duration) Result {
+func icmpPing(ctx context.Context, host string, seq int, timeout time.Duration, ipVersion int) Result {
 	addrs, err := net.LookupHost(host)
 	if err != nil {
 		return Result{Seq: seq, Error: fmt.Sprintf("resolve: %v", err)}
 	}
-	dst := addrs[0]
 
-	// Try unprivileged (udp4) first, fall back to privileged (ip4:icmp)
-	conn, err := icmp.ListenPacket("udp4", "")
-	network := "udp4"
-	if err != nil {
-		conn, err = icmp.ListenPacket("ip4:icmp", "0.0.0.0")
-		network = "ip4"
+	dst, isV6 := pickAddr(addrs, ipVersion)
+	if dst == "" {
+		v := ipVersion
+		if v == 0 {
+			v = 4
+		}
+		return Result{Seq: seq, Error: fmt.Sprintf("no IPv%d address found for %s", v, host)}
+	}
+
+	var conn *icmp.PacketConn
+	var network string
+
+	if isV6 {
+		conn, err = icmp.ListenPacket("udp6", "")
+		network = "udp6"
 		if err != nil {
-			return Result{Seq: seq, Error: fmt.Sprintf("listen: %v (try running with sudo)", err)}
+			conn, err = icmp.ListenPacket("ip6:ipv6-icmp", "::")
+			network = "ip6"
+			if err != nil {
+				return Result{Seq: seq, Error: fmt.Sprintf("listen: %v (try running with sudo)", err)}
+			}
+		}
+	} else {
+		conn, err = icmp.ListenPacket("udp4", "")
+		network = "udp4"
+		if err != nil {
+			conn, err = icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+			network = "ip4"
+			if err != nil {
+				return Result{Seq: seq, Error: fmt.Sprintf("listen: %v (try running with sudo)", err)}
+			}
 		}
 	}
 	defer conn.Close()
 
+	var msgType icmp.Type
+	var replyType icmp.Type
+	var protoNum int
+	if isV6 {
+		msgType = ipv6.ICMPTypeEchoRequest
+		replyType = ipv6.ICMPTypeEchoReply
+		protoNum = 58
+	} else {
+		msgType = ipv4.ICMPTypeEcho
+		replyType = ipv4.ICMPTypeEchoReply
+		protoNum = 1
+	}
+
+	id := os.Getpid() & 0xffff
 	msg := icmp.Message{
-		Type: ipv4.ICMPTypeEcho,
+		Type: msgType,
 		Code: 0,
 		Body: &icmp.Echo{
-			ID:   os.Getpid() & 0xffff,
+			ID:   id,
 			Seq:  seq,
 			Data: []byte("NETCHK"),
 		},
@@ -45,9 +82,10 @@ func icmpPing(ctx context.Context, host string, seq int, timeout time.Duration) 
 	}
 
 	var dstAddr net.Addr
-	if network == "udp4" {
+	switch network {
+	case "udp4", "udp6":
 		dstAddr = &net.UDPAddr{IP: net.ParseIP(dst)}
-	} else {
+	default:
 		dstAddr = &net.IPAddr{IP: net.ParseIP(dst)}
 	}
 
@@ -68,8 +106,6 @@ func icmpPing(ctx context.Context, host string, seq int, timeout time.Duration) 
 	}()
 	defer close(done)
 
-	id := os.Getpid() & 0xffff
-
 	start := time.Now()
 	if _, err := conn.WriteTo(wb, dstAddr); err != nil {
 		return Result{Seq: seq, Error: fmt.Sprintf("write: %v", err)}
@@ -85,12 +121,12 @@ func icmpPing(ctx context.Context, host string, seq int, timeout time.Duration) 
 			return Result{Seq: seq, Addr: dst, Error: fmt.Sprintf("read: %v", err)}
 		}
 
-		rm, err := icmp.ParseMessage(1, rb[:n])
+		rm, err := icmp.ParseMessage(protoNum, rb[:n])
 		if err != nil {
 			continue
 		}
 
-		if rm.Type != ipv4.ICMPTypeEchoReply {
+		if rm.Type != replyType {
 			continue
 		}
 
@@ -112,4 +148,29 @@ func icmpPing(ctx context.Context, host string, seq int, timeout time.Duration) 
 			Bytes:   n,
 		}
 	}
+}
+
+// pickAddr selects an address from the resolved list based on ipVersion preference.
+// Returns the selected address and whether it is IPv6.
+func pickAddr(addrs []string, ipVersion int) (string, bool) {
+	for _, addr := range addrs {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			continue
+		}
+		isV4 := ip.To4() != nil
+		switch ipVersion {
+		case 4:
+			if isV4 {
+				return addr, false
+			}
+		case 6:
+			if !isV4 {
+				return addr, true
+			}
+		default:
+			return addr, !isV4
+		}
+	}
+	return "", false
 }

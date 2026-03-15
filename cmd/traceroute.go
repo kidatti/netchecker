@@ -13,6 +13,8 @@ import (
 func RunTraceroute(args []string) {
 	fs := flag.NewFlagSet("traceroute", flag.ExitOnError)
 	maxHops := fs.Int("m", 30, "max number of hops")
+	ipv4Flag := fs.Bool("4", false, "use IPv4 only")
+	ipv6Flag := fs.Bool("6", false, "use IPv6 only")
 	fs.Parse(args)
 
 	if fs.NArg() < 1 {
@@ -30,7 +32,14 @@ func RunTraceroute(args []string) {
 		cancel()
 	}()
 
-	err := traceroute.Run(ctx, host, traceroute.Options{MaxHops: *maxHops},
+	ipVersion := 0
+	if *ipv4Flag {
+		ipVersion = 4
+	} else if *ipv6Flag {
+		ipVersion = 6
+	}
+
+	err := traceroute.Run(ctx, host, traceroute.Options{MaxHops: *maxHops, IPVersion: ipVersion},
 		func(dstIP string) {
 			fmt.Printf("traceroute to %s (%s), %d hops max\n", host, dstIP, *maxHops)
 		},

@@ -72,8 +72,10 @@ document.addEventListener("DOMContentLoaded", () => {
     pingStop.disabled = false;
 
     const timeoutVal = document.getElementById("ping-timeout").value.trim();
+    const pingIPV = document.querySelector('input[name="ping-ipv"]:checked').value;
     let url = "/api/ping/stream?host=" + encodeURIComponent(host) + "&icmp=" + icmp;
     if (timeoutVal) url += "&timeout=" + encodeURIComponent(timeoutVal);
+    if (pingIPV !== "0") url += "&ipversion=" + pingIPV;
     pingES = new EventSource(url);
     pingES.onmessage = (e) => {
       const r = JSON.parse(e.data);
@@ -118,7 +120,10 @@ document.addEventListener("DOMContentLoaded", () => {
     trStart.disabled = true;
     trStop.disabled = false;
 
-    trES = new EventSource("/api/traceroute/stream?host=" + encodeURIComponent(host));
+    const trIPV = document.querySelector('input[name="tr-ipv"]:checked').value;
+    let trUrl = "/api/traceroute/stream?host=" + encodeURIComponent(host);
+    if (trIPV !== "0") trUrl += "&ipversion=" + trIPV;
+    trES = new EventSource(trUrl);
     trES.addEventListener("info", (e) => {
       const info = JSON.parse(e.data);
       trOutput.textContent += "traceroute to " + host + " (" + info.dst_ip + ")\n\n";

@@ -49,11 +49,18 @@ func handlePingStream(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "host required", http.StatusBadRequest)
 		return
 	}
-	if err := validate.Domain(host); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
 	icmpMode := r.URL.Query().Get("icmp") == "true"
+	if icmpMode {
+		if err := validate.Domain(host); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	} else {
+		if err := validate.URL(host); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
 
 	var timeout time.Duration
 	if t := r.URL.Query().Get("timeout"); t != "" {
@@ -72,7 +79,14 @@ func handlePingStream(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	opts := ping.Options{ICMP: icmpMode, Count: 0, Timeout: timeout}
+	ipVersion := 0
+	if v := r.URL.Query().Get("ipversion"); v == "4" {
+		ipVersion = 4
+	} else if v == "6" {
+		ipVersion = 6
+	}
+
+	opts := ping.Options{ICMP: icmpMode, Count: 0, Timeout: timeout, IPVersion: ipVersion}
 
 	ping.Run(r.Context(), host, opts, func(result ping.Result) {
 		data, _ := json.Marshal(result)
@@ -106,7 +120,14 @@ func handleTracerouteStream(w http.ResponseWriter, r *http.Request) {
 
 	ctx := r.Context()
 
-	err := traceroute.Run(ctx, host, traceroute.Options{},
+	trIPVersion := 0
+	if v := r.URL.Query().Get("ipversion"); v == "4" {
+		trIPVersion = 4
+	} else if v == "6" {
+		trIPVersion = 6
+	}
+
+	err := traceroute.Run(ctx, host, traceroute.Options{IPVersion: trIPVersion},
 		func(dstIP string) {
 			infoData, _ := json.Marshal(map[string]string{"dst_ip": dstIP})
 			fmt.Fprintf(w, "event: info\ndata: %s\n\n", infoData)
