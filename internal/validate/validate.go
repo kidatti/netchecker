@@ -3,6 +3,7 @@ package validate
 import (
 	"fmt"
 	"net"
+	"net/url"
 	"strconv"
 	"strings"
 )
@@ -40,6 +41,26 @@ func Domain(s string) error {
 	}
 
 	return nil
+}
+
+// URL validates an HTTP/HTTPS URL. The scheme must be http or https,
+// and the hostname must pass Domain validation.
+func URL(s string) error {
+	if s == "" {
+		return fmt.Errorf("URL must not be empty")
+	}
+	u, err := url.Parse(s)
+	if err != nil {
+		return fmt.Errorf("invalid URL: %v", err)
+	}
+	if u.Scheme != "http" && u.Scheme != "https" {
+		return fmt.Errorf("URL scheme must be http or https")
+	}
+	host := u.Hostname()
+	if host == "" {
+		return fmt.Errorf("URL must contain a hostname")
+	}
+	return Domain(host)
 }
 
 // Port validates a port number string. Must be a number between 1 and 65535.

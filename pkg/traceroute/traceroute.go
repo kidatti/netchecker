@@ -10,6 +10,7 @@ import (
 
 	"golang.org/x/net/icmp"
 	"golang.org/x/net/ipv4"
+	"golang.org/x/net/ipv6"
 )
 
 type Hop struct {
@@ -23,7 +24,8 @@ type Hop struct {
 }
 
 type Options struct {
-	MaxHops int
+	MaxHops   int
+	IPVersion int // 0=auto, 4=IPv4, 6=IPv6
 }
 
 func Run(ctx context.Context, host string, opts Options, onResolved func(dstIP string), callback func(Hop)) error {
@@ -35,19 +37,30 @@ func Run(ctx context.Context, host string, opts Options, onResolved func(dstIP s
 	if err != nil {
 		return fmt.Errorf("resolve %s: %w", host, err)
 	}
-	dstIP := net.ParseIP(addrs[0])
 
-	if onResolved != nil {
-		onResolved(dstIP.String())
+	dst, isV6 := pickAddr(addrs, opts.IPVersion)
+	if dst == nil {
+		v := opts.IPVersion
+		if v == 0 {
+			v = 4
+		}
+		return fmt.Errorf("no IPv%d address found for %s", v, host)
 	}
 
-	conn, err := icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+	if onResolved != nil {
+		onResolved(dst.String())
+	}
+
+	var conn *icmp.PacketConn
+	if isV6 {
+		conn, err = icmp.ListenPacket("ip6:ipv6-icmp", "::")
+	} else {
+		conn, err = icmp.ListenPacket("ip4:icmp", "0.0.0.0")
+	}
 	if err != nil {
 		return fmt.Errorf("icmp listen: %w (try running with sudo)", err)
 	}
 	defer conn.Close()
-
-	pconn := conn.IPv4PacketConn()
 
 	for ttl := 1; ttl <= opts.MaxHops; ttl++ {
 		select {
@@ -56,7 +69,7 @@ func Run(ctx context.Context, host string, opts Options, onResolved func(dstIP s
 		default:
 		}
 
-		hop := probe(conn, pconn, dstIP, ttl)
+		hop := probe(conn, dst, ttl, isV6)
 		hop.TTL = ttl
 		callback(hop)
 
@@ -67,16 +80,32 @@ func Run(ctx context.Context, host string, opts Options, onResolved func(dstIP s
 	return nil
 }
 
-func probe(conn *icmp.PacketConn, pconn *ipv4.PacketConn, dst net.IP, ttl int) Hop {
+func probe(conn *icmp.PacketConn, dst net.IP, ttl int, isV6 bool) Hop {
 	id := os.Getpid() & 0xffff
 	seq := ttl
 
-	if err := pconn.SetTTL(ttl); err != nil {
-		return Hop{Error: fmt.Sprintf("set ttl: %v", err)}
+	if isV6 {
+		if err := conn.IPv6PacketConn().SetHopLimit(ttl); err != nil {
+			return Hop{Error: fmt.Sprintf("set hop limit: %v", err)}
+		}
+	} else {
+		if err := conn.IPv4PacketConn().SetTTL(ttl); err != nil {
+			return Hop{Error: fmt.Sprintf("set ttl: %v", err)}
+		}
+	}
+
+	var msgType icmp.Type
+	var protoNum int
+	if isV6 {
+		msgType = ipv6.ICMPTypeEchoRequest
+		protoNum = 58
+	} else {
+		msgType = ipv4.ICMPTypeEcho
+		protoNum = 1
 	}
 
 	msg := icmp.Message{
-		Type: ipv4.ICMPTypeEcho,
+		Type: msgType,
 		Code: 0,
 		Body: &icmp.Echo{
 			ID:   id,
@@ -97,6 +126,17 @@ func probe(conn *icmp.PacketConn, pconn *ipv4.PacketConn, dst net.IP, ttl int) H
 		return Hop{Error: fmt.Sprintf("write: %v", err)}
 	}
 
+	var echoReplyType, timeExceededType, dstUnreachType icmp.Type
+	if isV6 {
+		echoReplyType = ipv6.ICMPTypeEchoReply
+		timeExceededType = ipv6.ICMPTypeTimeExceeded
+		dstUnreachType = ipv6.ICMPTypeDestinationUnreachable
+	} else {
+		echoReplyType = ipv4.ICMPTypeEchoReply
+		timeExceededType = ipv4.ICMPTypeTimeExceeded
+		dstUnreachType = ipv4.ICMPTypeDestinationUnreachable
+	}
+
 	buf := make([]byte, 1500)
 	for {
 		n, peer, err := conn.ReadFrom(buf)
@@ -106,14 +146,13 @@ func probe(conn *icmp.PacketConn, pconn *ipv4.PacketConn, dst net.IP, ttl int) H
 			return Hop{Timeout: true}
 		}
 
-		rm, err := icmp.ParseMessage(1, buf[:n])
+		rm, err := icmp.ParseMessage(protoNum, buf[:n])
 		if err != nil {
 			continue
 		}
 
 		switch rm.Type {
-		case ipv4.ICMPTypeEchoReply:
-			// Verify this is our echo reply
+		case echoReplyType:
 			if echo, ok := rm.Body.(*icmp.Echo); ok {
 				if echo.ID != id || echo.Seq != seq {
 					continue
@@ -122,47 +161,48 @@ func probe(conn *icmp.PacketConn, pconn *ipv4.PacketConn, dst net.IP, ttl int) H
 			peerIP := peer.String()
 			return Hop{Addr: peerIP, Host: reverseLookup(peerIP), RTT: rtt, Reached: true}
 
-		case ipv4.ICMPTypeTimeExceeded, ipv4.ICMPTypeDestinationUnreachable:
-			// The body contains the original IP header + first 8 bytes of original ICMP
-			// Parse to verify it's our probe
-			if !matchOriginalProbe(rm, id, seq) {
+		case timeExceededType, dstUnreachType:
+			if !matchOriginalProbe(rm, id, seq, isV6) {
 				continue
 			}
 			peerIP := peer.String()
-			reached := rm.Type == ipv4.ICMPTypeDestinationUnreachable
+			reached := rm.Type == dstUnreachType
 			return Hop{Addr: peerIP, Host: reverseLookup(peerIP), RTT: rtt, Reached: reached}
 		}
-		// Unknown type, keep reading
 	}
 }
 
 // matchOriginalProbe checks if the Time Exceeded / Dest Unreachable body
 // contains our original ICMP echo (matching ID and Seq).
-func matchOriginalProbe(rm *icmp.Message, id, seq int) bool {
+func matchOriginalProbe(rm *icmp.Message, id, seq int, isV6 bool) bool {
 	body, ok := rm.Body.(*icmp.TimeExceeded)
 	if !ok {
 		body2, ok2 := rm.Body.(*icmp.DstUnreach)
 		if !ok2 {
 			return false
 		}
-		return extractAndMatch(body2.Data, id, seq)
+		return extractAndMatch(body2.Data, id, seq, isV6)
 	}
-	return extractAndMatch(body.Data, id, seq)
+	return extractAndMatch(body.Data, id, seq, isV6)
 }
 
 // extractAndMatch parses the embedded original packet data.
-// The data contains the original IP header (typically 20 bytes) followed
-// by at least the first 8 bytes of the original ICMP message.
-func extractAndMatch(data []byte, id, seq int) bool {
-	if len(data) < 28 {
+// For IPv4: data contains the original IP header (variable length via IHL) + first 8 bytes of ICMP.
+// For IPv6: data contains the original IPv6 header (40 bytes) + first 8 bytes of ICMPv6.
+func extractAndMatch(data []byte, id, seq int, isV6 bool) bool {
+	var hdrLen int
+	if isV6 {
+		hdrLen = 40
+	} else {
+		if len(data) < 20 {
+			return false
+		}
+		hdrLen = int(data[0]&0x0f) * 4
+	}
+	if len(data) < hdrLen+8 {
 		return false
 	}
-	// IP header length from IHL field
-	ihl := int(data[0]&0x0f) * 4
-	if len(data) < ihl+8 {
-		return false
-	}
-	icmpData := data[ihl:]
+	icmpData := data[hdrLen:]
 	// ICMP echo: type(1) code(1) checksum(2) id(2) seq(2)
 	origID := int(icmpData[4])<<8 | int(icmpData[5])
 	origSeq := int(icmpData[6])<<8 | int(icmpData[7])
@@ -175,4 +215,28 @@ func reverseLookup(ip string) string {
 		return ip
 	}
 	return strings.TrimRight(names[0], ".")
+}
+
+// pickAddr selects an address from the resolved list based on ipVersion preference.
+func pickAddr(addrs []string, ipVersion int) (net.IP, bool) {
+	for _, addr := range addrs {
+		ip := net.ParseIP(addr)
+		if ip == nil {
+			continue
+		}
+		isV4 := ip.To4() != nil
+		switch ipVersion {
+		case 4:
+			if isV4 {
+				return ip, false
+			}
+		case 6:
+			if !isV4 {
+				return ip, true
+			}
+		default:
+			return ip, !isV4
+		}
+	}
+	return nil, false
 }

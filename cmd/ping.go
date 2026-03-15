@@ -16,6 +16,8 @@ func RunPing(args []string) {
 	count := fs.Int("c", 0, "number of pings (0 = infinite)")
 	interval := fs.Float64("i", 1.0, "interval in seconds")
 	timeout := fs.Float64("t", 5.0, "timeout in seconds")
+	ipv4Flag := fs.Bool("4", false, "use IPv4 only")
+	ipv6Flag := fs.Bool("6", false, "use IPv6 only")
 	fs.Parse(args)
 
 	if fs.NArg() < 1 {
@@ -24,9 +26,17 @@ func RunPing(args []string) {
 	}
 	host := fs.Arg(0)
 
+	ipVersion := 0
+	if *ipv4Flag {
+		ipVersion = 4
+	} else if *ipv6Flag {
+		ipVersion = 6
+	}
+
 	opts := ping.Options{
-		ICMP:  !*httpFlag,
-		Count: *count,
+		ICMP:      !*httpFlag,
+		Count:     *count,
+		IPVersion: ipVersion,
 	}
 	if *interval > 0 {
 		opts.Interval = floatToDuration(*interval)
