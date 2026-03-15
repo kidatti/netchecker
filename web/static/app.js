@@ -18,6 +18,16 @@ document.addEventListener("DOMContentLoaded", () => {
       if (info.dns_server) {
         html += '<span class="net-info-item"><span class="net-info-label">DNS:</span> ' + escapeHtml(info.dns_server) + '</span>';
       }
+      if (info.public_ip) {
+        let globalIp = escapeHtml(info.public_ip);
+        if (info.public_ip_host) {
+          globalIp += ' (' + escapeHtml(info.public_ip_host) + ')';
+        }
+        if (info.country_name) {
+          globalIp += ' — ' + escapeHtml(info.country_name);
+        }
+        html += '<span class="net-info-item"><span class="net-info-label">Global IP:</span> ' + globalIp + '</span>';
+      }
       el.innerHTML = html || "No network info available";
     })
     .catch(() => {

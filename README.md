@@ -137,6 +137,8 @@ A/AAAA、CNAME、MX、NS、TXT レコードをまとめて取得する。
 
 ブラウザで `http://localhost:8080` を開くと、タブ切り替え型の UI で全機能を利用可能。ping と traceroute は SSE によるリアルタイム表示。
 
+Web 画面ではパブリック IP・国情報を表示するため、外部 API (`https://s.apiless.com/ip`) へアクセスします。
+
 ## API
 
 Web サーバー起動時に以下のエンドポイントが利用可能:

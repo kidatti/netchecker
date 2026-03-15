@@ -1,9 +1,11 @@
 package web
 
 import (
+	"context"
 	"embed"
 	"encoding/json"
 	"fmt"
+	"io"
 	"io/fs"
 	"net"
 	"net/http"
@@ -295,9 +297,13 @@ func handleTLSCert(w http.ResponseWriter, r *http.Request) {
 
 func handleNetInfo(w http.ResponseWriter, r *http.Request) {
 	type netInfoResponse struct {
-		IPs       []string `json:"ips"`
-		Hostname  string   `json:"hostname"`
-		DNSServer string   `json:"dns_server"`
+		IPs          []string `json:"ips"`
+		Hostname     string   `json:"hostname"`
+		DNSServer    string   `json:"dns_server"`
+		PublicIP     string   `json:"public_ip"`
+		PublicIPHost string   `json:"public_ip_host"`
+		CountryCode  string   `json:"country_code"`
+		CountryName  string   `json:"country_name"`
 	}
 
 	resp := netInfoResponse{}
@@ -333,6 +339,35 @@ func handleNetInfo(w http.ResponseWriter, r *http.Request) {
 
 	// Parse /etc/resolv.conf for default DNS server
 	resp.DNSServer = dns.DefaultServer()
+
+	// Fetch public IP info from external API (best-effort, 3s timeout)
+	ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://s.apiless.com/ip", nil)
+	if err == nil {
+		if apiResp, err := http.DefaultClient.Do(req); err == nil {
+			defer apiResp.Body.Close()
+			body, err := io.ReadAll(apiResp.Body)
+			if err == nil {
+				var ipInfo struct {
+					IP          string `json:"ip"`
+					CountryCode string `json:"countryCode"`
+					CountryName string `json:"countryName"`
+				}
+				if json.Unmarshal(body, &ipInfo) == nil && ipInfo.IP != "" {
+					resp.PublicIP = ipInfo.IP
+					resp.CountryCode = ipInfo.CountryCode
+					resp.CountryName = ipInfo.CountryName
+
+					// Reverse DNS lookup for the public IP
+					hosts, err := net.LookupAddr(ipInfo.IP)
+					if err == nil && len(hosts) > 0 {
+						resp.PublicIPHost = hosts[0]
+					}
+				}
+			}
+		}
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
